@@ -1,0 +1,53 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Admin\Bootstrap;
+use Admin\Db\Migrator;
+use Admin\Domain\DomainError;
+use Admin\Domain\Role;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$usage = <<<TXT
+uso: bin/console <comando>
+
+  migrar                          cria/atualiza as tabelas
+  usuario:criar <nome> <cargo>    cria um usuário (admin, moderador ou suporte); a senha é lida da entrada
+  demo                            enche o banco com jogadores fictícios pra testar o painel
+
+TXT;
+
+$app = Bootstrap::app();
+$command = $argv[1] ?? '';
+
+try {
+    switch ($command) {
+        case 'migrar':
+            $applied = (new Migrator($app->db, dirname(__DIR__) . '/migrations'))->migrate();
+            echo $applied ? 'aplicadas: ' . implode(', ', $applied) . "\n" : "nada a fazer, banco em dia\n";
+            break;
+
+        case 'usuario:criar':
+            [$name, $roleName] = [$argv[2] ?? '', $argv[3] ?? ''];
+            $role = Role::tryFrom($roleName) ?? throw new DomainError('cargo precisa ser admin, moderador ou suporte');
+            fwrite(STDERR, 'senha (mínimo 12 caracteres): ');
+            $password = trim((string) fgets(STDIN));
+            $id = $app->users->create($name, $password, $role);
+            $app->audit->record(null, 'usuario.criar', 'usuario', $id, ['usuario' => $name, 'cargo' => $role->value, 'via' => 'console'], 'console');
+            echo "usuário $name criado (#$id)\n";
+            break;
+
+        case 'demo':
+            require dirname(__DIR__) . '/scripts/demo.php';
+            break;
+
+        default:
+            echo $usage;
+            exit($command === '' ? 0 : 1);
+    }
+} catch (DomainError $e) {
+    fwrite(STDERR, 'erro: ' . $e->getMessage() . "\n");
+    exit(1);
+}
